@@ -5,6 +5,8 @@
 extern crate syntex_syntax;
 extern crate toml;
 extern crate env_logger;
+#[macro_use]
+extern crate clap;
 
 extern crate racer;
 
@@ -22,23 +24,30 @@ use racer::nameres::{do_file_search, do_external_search, PATH_SEP};
 use racer::scopes;
 #[cfg(not(test))]
 use std::path::Path;
+#[cfg(not(test))]
+use clap::{App, Arg, ArgMatches, SubCommand};
 
 #[cfg(not(test))]
 fn match_with_snippet_fn(m: Match, session: &core::Session) {
-    let (linenum, charnum) = scopes::point_to_coords_from_file(&m.filepath, m.point, session).unwrap();
-    if m.matchstr == "" {
-        panic!("MATCHSTR is empty - waddup?");
-    }
+    if let Some((linenum, charnum)) = scopes::point_to_coords_from_file(&m.filepath,
+                                                                        m.point,
+                                                                        session) {
+        if m.matchstr == "" {
+            panic!("MATCHSTR is empty - waddup?");
+        }
 
-    let snippet = racer::snippets::snippet_for_match(&m, session);
-    println!("MATCH {};{};{};{};{};{:?};{}", m.matchstr,
-                                    snippet,
-                                    linenum.to_string(),
-                                    charnum.to_string(),
-                                    m.filepath.to_str().unwrap(),
-                                    m.mtype,
-                                    m.contextstr
-             );
+        let snippet = racer::snippets::snippet_for_match(&m, session);
+        println!("MATCH {};{};{};{};{};{:?};{}", m.matchstr,
+                                        snippet,
+                                        linenum.to_string(),
+                                        charnum.to_string(),
+                                        m.filepath.to_str().unwrap(),
+                                        m.mtype,
+                                        m.contextstr
+                 );
+    } else {
+        error!("Could not resolve file coords for match {:?}", m);
+    }
 }
 
 #[cfg(not(test))]
@@ -59,27 +68,12 @@ fn match_fn(m: Match, session: &core::Session) {
 }
 
 #[cfg(not(test))]
-fn complete(match_found: &Fn(Match, &core::Session), args: &[String]) {
-    if args.len() < 2 {
-        println!("Provide more arguments!");
-        print_usage();
-        std::process::exit(1);
-    }
-    match args[1].parse::<usize>() {
+fn complete(match_found: &Fn(Match, &core::Session), args: &ArgMatches) {
+    match args.value_of("fqn or linenum").unwrap().parse::<usize>() {
         Ok(linenum) => {
-            // input: linenum, colnum, fname
-            if args.len() < 4 {
-                println!("Provide more arguments!");
-                print_usage();
-                std::process::exit(1);
-            }
-            let charnum = args[2].parse::<usize>().unwrap();
-            let fname = &args[3];
-            let substitute_file = Path::new(match args.len() > 4 {
-                true => &args[4],
-                false => fname
-            });
-            let fpath = Path::new(fname);
+            let charnum = value_t_or_exit!(args.value_of("charnum"), usize);
+            let fpath = Path::new(args.value_of("fname").unwrap());
+            let substitute_file = args.value_of("substitute_file").map_or(fpath, Path::new);
             let session = core::Session::from_path(&fpath, &substitute_file);
             let src = session.load_file(&fpath);
             let line = &getline(&substitute_file, linenum, &session);
@@ -94,7 +88,7 @@ fn complete(match_found: &Fn(Match, &core::Session), args: &[String]) {
         }
         Err(_) => {
             // input: a command line string passed in
-            let arg = &args[1];
+            let arg = args.value_of("fqn or linenum").unwrap();
             let it = arg.split("::");
             let p: Vec<&str> = it.collect();
             let session = core::Session::from_path(&Path::new("."), &Path::new("."));
@@ -115,61 +109,31 @@ fn complete(match_found: &Fn(Match, &core::Session), args: &[String]) {
 }
 
 #[cfg(not(test))]
-fn prefix(args: &[String]) {
-    if args.len() < 4 {
-        println!("Provide more arguments!");
-        print_usage();
-        std::process::exit(1);
-    }
-    let linenum = args[1].parse::<usize>().unwrap();
-    let charnum = args[2].parse::<usize>().unwrap();
-    let fname = &args[3];
-    let substitute_file = Path::new(match args.len() > 4 {
-        true => &args[4],
-        false => fname
-    });
-    let fpath = Path::new(&fname);
-    let session = core::Session::from_path(&fpath, &substitute_file);
+fn prefix(args: &ArgMatches) {
+    let linenum = value_t_or_exit!(args.value_of("linenum"), usize);
+    let charnum = value_t_or_exit!(args.value_of("charnum"), usize);
+    let fpath = Path::new(args.value_of("fname").unwrap());
+    let substitute_file = args.value_of("substitute_file").map_or(fpath, Path::new);
 
     // print the start, end, and the identifier prefix being matched
-    let path = Path::new(fname);
-    let line = &getline(&path, linenum, &session);
+    let session = core::Session::from_path(&fpath, &substitute_file);
+    let line = &getline(&fpath, linenum, &session);
     let (start, pos) = util::expand_ident(line, charnum);
     println!("PREFIX {},{},{}", start, pos, &line[start..pos]);
 }
 
 #[cfg(not(test))]
-fn find_definition(args: &[String]) {
-    if args.len() < 4 {
-        println!("Provide more arguments!");
-        print_usage();
-        std::process::exit(1);
-    }
-    let linenum = args[1].parse::<usize>().unwrap();
-    let charnum = args[2].parse::<usize>().unwrap();
-    let fname = &args[3];
-    let substitute_file = Path::new(match args.len() > 4 {
-        true => &args[4],
-        false => fname
-    });
-    let fpath = Path::new(&fname);
+fn find_definition(args: &ArgMatches) {
+    let linenum = value_t_or_exit!(args.value_of("linenum"), usize);
+    let charnum = value_t_or_exit!(args.value_of("charnum"), usize);
+    let fpath = Path::new(args.value_of("fname").unwrap());
+    let substitute_file = args.value_of("substitute_file").map_or(fpath, Path::new);
     let session = core::Session::from_path(&fpath, &substitute_file);
     let src = session.load_file(&fpath);
     let pos = scopes::coords_to_point(&src, linenum, charnum);
 
     core::find_definition(&src, &fpath, pos, &session).map(|m| match_fn(m, &session));
     println!("END");
-}
-
-#[cfg(not(test))]
-fn print_usage() {
-    let program = std::env::args().next().unwrap().clone();
-    println!("usage: {} complete linenum charnum fname [substitute_file]", program);
-    println!("or:    {} find-definition linenum charnum fname [substitute_file]", program);
-    println!("or:    {} complete fullyqualifiedname   (e.g. std::io::)", program);
-    println!("or:    {} prefix linenum charnum fname", program);
-    println!("or replace complete with complete-with-snippet for more detailed completions.");
-    println!("or:    {} daemon     - to start a process that receives the above commands via stdin", program);
 }
 
 #[cfg(not(test))]
@@ -200,47 +164,72 @@ fn daemon() {
         if n == 0 {
             break;
         }
-        let args: Vec<String> = input.split(" ").map(|s| s.trim().to_string()).collect();
-        run(&args);
-        
+        let matches = build_cli().get_matches_from(input.split(" ").map(|s| s.trim().to_string()));
+        run(matches);
+
         input.clear();
     }
 }
 
+fn build_cli<'a, 'b, 'c, 'd, 'e, 'f>() -> App<'a, 'b, 'c, 'd, 'e, 'f> {
+    App::new("racer")
+        .version("v1.0.0")
+        .author("Phil Dawes")
+        .about("A Rust code completion utility")
+        .subcommand_required(true)
+        .global_version(true)
+        .subcommand(SubCommand::with_name("complete")
+            .about("performs completion and returns matches")
+            .arg_from_usage("<fqn or linenum>  'complete with a fully-qualified-name (e.g. std::io::) \
+                             or line number'")
+            .arg(Arg::from_usage("[charnum]    'The char number'")
+                .requires("fname"))
+            .arg_from_usage("[fname]           'The function name to match'")
+            .arg_from_usage("[substitute_file] 'An optional substitute file'"))
+        .subcommand(SubCommand::with_name("daemon")
+            .about("start a process that receives the above commands via stdin"))
+        .subcommand(SubCommand::with_name("find-definition")
+            .about("finds the definition of a function")
+            .args_from_usage("<linenum> 'The line number'
+                              <charnum> 'The char number'
+                              <fname>   'The function name to match'
+                              [substitute_file] 'An optional substitute file'"))
+        .subcommand(SubCommand::with_name("prefix")
+            .args_from_usage("<linenum> 'The line number'
+                              <charnum> 'The char number'
+                              <fname>   'The function name to match'"))
+        .subcommand(SubCommand::with_name("complete-with-snippet")
+            .about("performs completion and returns more detailed matches")
+            .arg_from_usage("<fqn or linenum>  'complete with a fully-qualified-name (e.g. std::io::) \
+                             or line number'")
+            .arg(Arg::from_usage("[charnum]    'The char number'")
+                .requires("fname"))
+            .arg_from_usage("[fname]           'The function name to match'")
+            .arg_from_usage("[substitute_file] 'An optional substitute file'"))
+        .after_help("For more information about a specific command try 'racer <command> --help'")
+}
+
+#[cfg(not(test))]
+fn run(m: ArgMatches) {
+    // match raw subcommand, and get it's matches
+    match m.subcommand() {
+        ("daemon", _)                   => daemon(),
+        ("prefix", Some(sub_matches))   => prefix(&sub_matches),
+        ("complete", Some(sub_matches)) => complete(&match_fn, &sub_matches),
+        ("complete-with-snippet", Some(sub_matches)) => complete(&match_with_snippet_fn, &sub_matches),
+        ("find-definition", Some(sub_matches))       => find_definition(&sub_matches),
+        _ => unreachable!()
+    }
+}
 
 #[cfg(not(test))]
 fn main() {
     // make sure we get a stack trace ifwe panic
     ::std::env::set_var("RUST_BACKTRACE","1");
-
     env_logger::init().unwrap();
+
     check_rust_src_env_var();
 
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.len() == 1 {
-        print_usage();
-        std::process::exit(1);
-    }
-
-    let args = &args[1..];
-    run(args);
-}
-
-#[cfg(not(test))]
-fn run(args: &[String]) {
-    let command  = &args[0];
-    match &command[..] {
-        "daemon" => daemon(),
-        "prefix" => prefix(&args),
-        "complete" => complete(&match_fn, &args),
-        "complete-with-snippet" => complete(&match_with_snippet_fn, &args),
-        "find-definition" => find_definition(&args),
-        "help" => print_usage(),
-        cmd => {
-            println!("Sorry, I didn't understand command {}", cmd);
-            print_usage();
-            std::process::exit(1);
-        }
-    }
+    let matches = build_cli().get_matches();
+    run(matches);
 }

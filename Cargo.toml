@@ -23,5 +23,9 @@ syntex_syntax = "*"
 toml = "*"
 env_logger = "*"
 
+[dependencies.clap]
+version = "~1.2.0"
+default-features = false
+
 [features]
 nightly = []
